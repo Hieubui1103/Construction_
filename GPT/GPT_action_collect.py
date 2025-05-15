@@ -1,21 +1,20 @@
+import base64
 from openai import OpenAI
+from PIL import Image
 import os
 import openpyxl
 from openpyxl.styles import Alignment
-from openpyxl.drawing.image import Image
-from aws import get_s3_file_urls
 from dotenv import load_dotenv
 
 load_dotenv()
 
 client = OpenAI(
     # This is the default and can be omitted
-    api_key= os.getenv("GPT_KEY")
+    api_key=os.getenv('GPT_KEY'),
 )
 
-
 # Import the Excel file
-output_file = "action_label.xlsx"
+output_file = "Action_cons.xlsx"
         # Load the existing workbook
 if os.path.exists(output_file):
     book = openpyxl.load_workbook(output_file)
@@ -23,10 +22,10 @@ else:
     book = openpyxl.Workbook()
 
     # Select the desired sheet (create a new one if needed)
-if 'Responses' in book.sheetnames:
-    sheet = book['Responses']
+if 'GPT_Actions' in book.sheetnames:
+    sheet = book['GPT_Actions']
 else:
-    sheet = book.create_sheet('Responses')
+    sheet = book.create_sheet('GPT_Actions')
 
 new_header =  [
         "Operating heavy machinery",
@@ -39,7 +38,6 @@ new_header =  [
         "Communicating with supervisors",
         "Following safety protocols",
         "Taking breaks/resting",
-        "Photo link"
         ]
 
 data = {header_item: None for header_item in new_header}
@@ -51,9 +49,9 @@ def get_last_non_empty_row(sheet):
             return row
     return 0  # Return 0 if all rows are empty
 
-def parse_gpt_response(response, img):
+def parse_gpt_response(response):
     """
-    Parse the GPT-4 response to extract the 1s and 0s for each action.
+    Parse the GPT-4o response to extract the 1s and 0s for each action.
     """
     # Initialize a list to store the parsed values
     parsed_response = []
@@ -70,7 +68,6 @@ def parse_gpt_response(response, img):
             if label.isdigit(): 
                 parsed_response.append(int(label))
 
-    parsed_response.append(img)
     print(parsed_response)
     for i, header_item in enumerate(new_header):
         if data[header_item] is None:
@@ -97,45 +94,67 @@ def import_excel():
             sheet.row_dimensions[last_row + 1 + j].height = 60
     
     book.save(output_file)
+# Function to encode the image
+def encode_image(image_path):
+    # Encode as base64
+    with open(image_path, "rb") as image_file:
+        image_data = image_file.read()
+        if image_data[:8] != b"\x89PNG\r\n\x1a\n":
+            raise ValueError("File is not a valid PNG")
+        return base64.b64encode(image_data).decode("utf-8")
 
-img_url = get_s3_file_urls()
-print(len(img_url))
-for i in range(1,len(img_url)):
-    # if img_url == "q":
-    #     break
-    image_paths_input = img_url[i]
-    #photo_dt.append(image_paths_input)
-    print(f"\n For photo number {i}: ")
-    print(image_paths_input)
-    response = client.chat.completions.create(
-        model="gpt-4-turbo",
-        messages=[
-            {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": """Identify the actions that appear in this photo, labeling as 1 and 0 for each of these actions: (use "-" to annotate 1 or 0 next to the label name: e.g. Operating heavy machinery - 1) (Just labelling them, no need further explanation for each action.) [
-                    "Operating heavy machinery",
-                    "Lifting and carrying materials",
-                    "Measuring and marking surfaces",
-                    "Mixing cement or concrete",
-                    "Collaborating in teams",
-                    "Using hand tools (e.g., hammering, drilling)",
-                    "Inspecting completed work",
-                    "Communicating with supervisors",
-                    "Following safety protocols",
-                    "Taking breaks/resting"
-                    ]?"""},
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"{image_paths_input}"},
-                    },
-                ],
-            }
-        ],
-    )
-    response_1 = response.choices[0].message.content
-    print(response_1)
-    parse_gpt = parse_gpt_response(response_1, image_paths_input)
+
+# Path to your image
+for folder in os.listdir(r"C:\VScode\Construction_CV\photo_extract\action_images"):
+    if folder.endswith(".zip"):
+        continue
+    path_batch = os.path.join(r"C:\VScode\Construction_CV\photo_extract\action_images",folder)
+    for file in os.listdir(path_batch):
+        if file.endswith(".png"):
+            image_path = os.path.join(path_batch, file)
+            
+        print(f"\n For photo number {file}: ")
+        # Getting the Base64 string
+        base64_image = encode_image(image_path)
+
+        response = client.responses.create(
+            model="chatgpt-4o-latest",
+            input=[
+                {
+                    "role": "user",
+                    "content": [
+                        { "type": "input_text", 
+                        "text":  """Identify the actions that are detected in this photo, labeling as 1 or 0 for each of these identified actions: (use "-" to annotate 1 or 0 next to the label name: Action-1 or Action-0). If you cannot identify any action, just label "0" for all of them. (Also, just labelling them, no need further explanation for each action).
+
+                        Actions to identify:
+                        
+                        "Operating heavy machinery"
+                        "Lifting and carrying materials"
+                        "Measuring and marking surfaces"
+                        "Mixing cement or concrete"
+                        "Collaborating in teams"
+                        "Using hand tools (e.g., hammering, drilling)"
+                        "Inspecting completed work"
+                        "Communicating with supervisors"
+                        "Following safety protocols"
+                        "Taking breaks/resting"
+
+                        """},
+                        {
+                            "type": "input_image",
+                            "image_url": f"data:image/png;base64,{base64_image}",
+                        },
+                    ],
+                }
+            ],
+        )
+        response_1 = response.output_text
+        print(response.output_text)
+        parse_gpt = parse_gpt_response(response_1)
 
 import_excel()
+
+
+
+
 
